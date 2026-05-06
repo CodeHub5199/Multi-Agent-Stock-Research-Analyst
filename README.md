@@ -3,7 +3,7 @@
 **An institutional-grade, multi-agent AI system for Indian equity research.**  
 Built with **LangGraph**, **Groq**, **Tavily**, and **yfinance** — it runs parallel specialized agents (Fundamentals, Technical, News) → synthesizes signals → applies a critic layer, and delivers a polished, actionable research report.
 
-![Dashboard Preview](https://via.placeholder.com/800x400/0b0f14/2dd4bf?text=StockMind+Dashboard)  
+![Dashboard Preview](https://codehub5199.github.io/Multi-Agent-Stock-Research-Analyst/)  
 
 ## ✨ Features
 
