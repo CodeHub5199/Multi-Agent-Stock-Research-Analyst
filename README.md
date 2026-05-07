@@ -149,7 +149,7 @@ User revisits /dashboard →  Past reports load in the left sidebar
 |---|---|
 | `api/auth.py` | FastAPI `Depends(get_current_user)` — verifies Supabase JWT |
 | `api/supabase_client.py` | Cached Supabase admin client (server-side only) |
-| `api/models_auth.py` | Pydantic models for report list/detail endpoints |
+| `api/models.py` | Pydantic models for report list/detail endpoints |
 | `templates/index.html` | Public hero/landing page with auth modal |
 
 ---
