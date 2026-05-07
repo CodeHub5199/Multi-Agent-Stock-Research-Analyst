@@ -23,6 +23,11 @@ from api.models import AnalyzeRequest, AnalyzeResponse, HealthResponse, ErrorRes
 from api.pipeline import run_research_pipeline
 from api.config import get_settings
 
+from api.auth import get_current_user, get_optional_user
+from api.supabase_client import get_supabase
+from api.models import ReportSummary, ReportDetail, SaveReportRequest
+from fastapi import Depends
+
 
 # ── Helpers ───────────────────────────────────────────────────────────
 
@@ -94,8 +99,17 @@ app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 # ── Routes ────────────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+async def landing():
+    """Serve the landing/hero page."""
+    html_path = Path(__file__).parent / "templates" / "index.html"
+    if not html_path.exists():
+        raise HTTPException(status_code=500, detail="Landing page not found.")
+    return HTMLResponse(content=html_path.read_text(encoding="utf-8"))
+
+
+@app.get("/dashboard", response_class=HTMLResponse, include_in_schema=False)
 async def dashboard():
-    """Serve the single-page research dashboard."""
+    """Serve the research dashboard (protected client-side by Supabase auth)."""
     html_path = Path(__file__).parent / "templates" / "dashboard.html"
     if not html_path.exists():
         raise HTTPException(status_code=500, detail="Dashboard template not found.")
@@ -108,17 +122,86 @@ async def health():
     return HealthResponse(status="ok", version=app.version)
 
 @app.get("/stocks", tags=["Meta"])
-async def get_stocks():
-    """Return all NSE stock codes for autocomplete."""
+async def get_stocks(q: str = ""):
+    """Return filtered NSE stock codes for autocomplete."""
     try:
         from nsetools import Nse
         nse = Nse()
-        all_stocks = nse.get_stock_codes()
-        return JSONResponse(content=[t for t in all_stocks if t])
+        all_stocks = nse.get_stock_codes()  # returns ["SBIN", "TATAPOWER", ...]
+        stocks = [t for t in all_stocks if t]
+        if q:
+            stocks = [t for t in stocks if q.upper() in t.upper()]
+        return JSONResponse(content=sorted(stocks)[:30])
     except Exception as exc:
         logger.warning("Failed to fetch stock codes: %s", exc)
         raise HTTPException(status_code=500, detail=f"Could not load stock list: {exc}")
 
+
+@app.get(
+    "/reports",
+    tags=["Reports"],
+    summary="List saved reports for the authenticated user",
+)
+
+async def list_reports(
+    limit: int = 20,
+    user: dict = Depends(get_current_user),
+):
+    """Return the N most recent reports for the logged-in user."""
+    try:
+        sb = get_supabase()
+        result = (
+            sb.table("reports")
+            .select("id, ticker, company_name, verdict, elapsed_seconds, created_at")
+            .eq("user_id", user["id"])
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return JSONResponse(content=result.data if result.data else [])
+    except Exception as exc:
+        logger.warning("Failed to fetch reports for user %s: %s", user["id"], exc)
+        return JSONResponse(content=[])
+
+
+@app.get(
+    "/reports/{report_id}",
+    response_model=ReportDetail,
+    tags=["Reports"],
+    summary="Fetch a single saved report by ID",
+)
+async def get_report(
+    report_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """Fetch the full payload of a saved report. Enforces ownership."""
+    sb = get_supabase()
+    result = (
+        sb.table("reports")
+        .select("*")
+        .eq("id", report_id)
+        .eq("user_id", user["id"])   # ownership check
+        .single()
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Report not found.")
+    return result.data
+
+
+@app.delete(
+    "/reports/{report_id}",
+    status_code=204,
+    tags=["Reports"],
+    summary="Delete a saved report",
+)
+async def delete_report(
+    report_id: str,
+    user: dict = Depends(get_current_user),
+):
+    """Delete a report. Only the owner can delete."""
+    sb = get_supabase()
+    sb.table("reports").delete().eq("id", report_id).eq("user_id", user["id"]).execute()
 
 @app.post(
     "/analyze",
@@ -126,25 +209,63 @@ async def get_stocks():
     responses={422: {"model": ErrorResponse}, 500: {"model": ErrorResponse}},
     tags=["Research"],
     summary="Run full multi-agent stock research",
-    description=(
-        "Accepts a stock ticker (e.g. `SBIN.NS`, `RELIANCE.NS`, `AAPL`) and an optional "
-        "depth level, runs the parallel LangGraph pipeline "
-        "(Fundamentals + Technical + News → Synthesis → Critic), "
-        "and returns the complete `final_state` JSON."
-    ),
 )
-async def analyze(request: AnalyzeRequest):
+async def analyze(request: AnalyzeRequest, user: dict = Depends(get_optional_user)):
     """
     Blocking endpoint: waits for all agents to complete before returning.
     Typical latency: 20–60 s depending on ticker and model.
     """
 
     ticker = request.ticker.strip().upper()
-    logger.info("▶ /analyze  ticker=%s  depth=%s", ticker, None)
+    logger.info("▶ /analyze  ticker=%s  depth=%s  user=%s", ticker, None, user)
 
     t0 = time.perf_counter()
     try:
         final_state = await run_research_pipeline(ticker=ticker, depth=None)
+        elapsed = round(time.perf_counter() - t0, 2)
+        # Auto-save report if user is authenticated
+        if user:
+            try:
+                sb = get_supabase()
+                synth  = final_state.get("synthesis_output")
+                critic = final_state.get("critic_output")
+                fund   = final_state.get("fundamentals_output")
+                verdict = None
+                if critic and hasattr(critic, 'critic_verdict'):
+                    verdict = getattr(critic.critic_verdict, 'critic_adjusted_verdict', None)
+                if not verdict and synth and hasattr(synth, 'recommendation'):
+                    verdict = getattr(synth.recommendation, 'verdict', None)
+                company = None
+
+                if fund:
+                    if hasattr(fund, 'metadata'):
+                        metadata = fund.metadata
+                        if isinstance(metadata, dict):
+                            company = metadata.get('company_name')
+                        else:
+                            company = getattr(metadata, 'company_name', None)
+                    elif isinstance(fund, dict):
+                        company = (fund.get('metadata') or {}).get('company_name')
+
+                print("Company_name:", company)
+                sb.table("reports").insert({
+                    "user_id":         user["id"],
+                    "ticker":          ticker,
+                    "company_name":    company,
+                    "verdict":         verdict,
+                    "elapsed_seconds": elapsed,
+                    "payload":         AnalyzeResponse(
+                        ticker=ticker, 
+                        elapsed_seconds=elapsed,
+                        fundamentals_output=_to_dict(final_state.get("fundamentals_output")),
+                        technical_output=_to_dict(final_state.get("technical_output")),
+                        news_output=_to_dict(final_state.get("news_output")),
+                        synthesis_output=_to_dict(final_state.get("synthesis_output")),
+                        critic_output=_to_dict(final_state.get("critic_output")),
+                    ).model_dump(),
+                }).execute()
+            except Exception as save_exc:
+                logger.warning("Failed to save report for user %s: %s", user['id'], save_exc)
     except ValueError as exc:
         logger.warning("Validation error for %s: %s", ticker, exc)
         raise HTTPException(status_code=422, detail=str(exc))
@@ -152,7 +273,6 @@ async def analyze(request: AnalyzeRequest):
         logger.exception("Pipeline failed for %s", ticker)
         raise HTTPException(status_code=500, detail=f"Pipeline error: {exc}")
 
-    elapsed = round(time.perf_counter() - t0, 2)
     logger.info("✅ /analyze  ticker=%s  elapsed=%.2fs", ticker, elapsed)
 
     return AnalyzeResponse(

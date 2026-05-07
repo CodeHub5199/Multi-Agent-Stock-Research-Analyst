@@ -9,6 +9,7 @@ forward-compatible with future agent schema changes.
 from __future__ import annotations
 from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
+from datetime import datetime
 
 
 # ── Request ───────────────────────────────────────────────────────────
@@ -57,3 +58,36 @@ class HealthResponse(BaseModel):
 
 class ErrorResponse(BaseModel):
     detail: str
+
+
+# ── Report models ─────────────────────────────────────────────────────
+
+class ReportSummary(BaseModel):
+    """Lightweight row returned in the history list."""
+    id:              str
+    ticker:          str
+    company_name:    str | None = None
+    verdict:         str | None = None
+    elapsed_seconds: float | None = None
+    created_at:      datetime
+
+
+class ReportDetail(ReportSummary):
+    """Full report including the complete pipeline payload."""
+    payload: dict[str, Any]
+
+
+class SaveReportRequest(BaseModel):
+    """
+    Body for POST /reports.
+    The frontend posts the full AnalyzeResponse JSON here.
+    """
+    ticker:          str
+    elapsed_seconds: float
+    company_name:    str | None = None
+    verdict:         str | None = None
+    fundamentals_output: dict[str, Any] | None = None
+    technical_output:    dict[str, Any] | None = None
+    news_output:         dict[str, Any] | None = None
+    synthesis_output:    dict[str, Any] | None = None
+    critic_output:       dict[str, Any] | None = None
