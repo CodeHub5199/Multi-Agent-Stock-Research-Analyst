@@ -149,7 +149,7 @@ User revisits /dashboard →  Past reports load in the left sidebar
 |---|---|
 | `api/auth.py` | FastAPI `Depends(get_current_user)` — verifies Supabase JWT |
 | `api/supabase_client.py` | Cached Supabase admin client (server-side only) |
-| `api/models.py` | Pydantic models for report list/detail endpoints |
+| `api/models_auth.py` | Pydantic models for report list/detail endpoints |
 | `templates/index.html` | Public hero/landing page with auth modal |
 
 ---
@@ -380,9 +380,11 @@ curl http://localhost:8000/health
 ```
 multi-agent-stock-research/
 ├── agents/                      # Core research agents (Pydantic outputs)
-│   ├── fundamentals_agent.py
-│   ├── technical_agent.py
-│   └── news_agent.py
+│   ├── fundamentals_research.py
+│   ├── technical_research.py
+│   ├── news_research.py
+│   ├── synthesis_research.py
+│   └── critic_research.py
 ├── api/                         # FastAPI layer
 │   ├── auth.py                  # JWT verification — Depends(get_current_user)
 │   ├── supabase_client.py       # Supabase admin client (server-side only)
