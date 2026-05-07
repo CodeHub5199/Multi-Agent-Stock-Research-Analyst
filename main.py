@@ -121,17 +121,20 @@ async def health():
     """Liveness probe."""
     return HealthResponse(status="ok", version=app.version)
 
+_stock_cache: list[str] = []   # module-level cache
+
 @app.get("/stocks", tags=["Meta"])
-async def get_stocks(q: str = ""):
-    """Return filtered NSE stock codes for autocomplete."""
+async def get_stocks():
+    """Return all NSE stock codes — called once on page load."""
+    global _stock_cache
+    if _stock_cache:
+        return JSONResponse(content=_stock_cache)
     try:
         from nsetools import Nse
         nse = Nse()
-        all_stocks = nse.get_stock_codes()  # returns ["SBIN", "TATAPOWER", ...]
-        stocks = [t for t in all_stocks if t]
-        if q:
-            stocks = [t for t in stocks if q.upper() in t.upper()]
-        return JSONResponse(content=sorted(stocks)[:30])
+        all_stocks = nse.get_stock_codes()
+        _stock_cache = sorted([t for t in all_stocks if t])
+        return JSONResponse(content=_stock_cache)
     except Exception as exc:
         logger.warning("Failed to fetch stock codes: %s", exc)
         raise HTTPException(status_code=500, detail=f"Could not load stock list: {exc}")
