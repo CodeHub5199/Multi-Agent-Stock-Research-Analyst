@@ -14,6 +14,7 @@
 [Features](#-features) • [Architecture](#-architecture) • [Authentication](#-authentication) • [Installation](#-installation) • [API Reference](#-api-reference) • [Contributing](#-contributing)
 
 🌐 **Live Preview:** https://codehub5199.github.io/Multi-Agent-Stock-Research-Analyst/
+
 🐙 **GitHub:** https://github.com/CodeHub5199/Multi-Agent-Stock-Research-Analyst
 
 </div>
