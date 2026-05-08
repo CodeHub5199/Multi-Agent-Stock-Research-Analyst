@@ -1058,6 +1058,7 @@ let acItems    = [];
 let acIndex    = -1;
 let acDebounce = null;
 let acAbort    = null;
+let allStocks  = [];   // full list loaded once on page load
 
 const acDrop = () => $('ac-dropdown');
 function acOpen()  { acDrop().classList.add('open'); }
@@ -1107,26 +1108,19 @@ function acActivate(i) {
   acIndex = i;
 }
 
-async function acFetch(q) {
-  if (acAbort) acAbort.abort();
-  acAbort = new AbortController();
-  acDrop().innerHTML = '<div class="ac-status"><span class="ac-spinner"></span> Searching…</div>';
-  acOpen();
-  try {
-    const url = '/stocks' + (q ? `?q=${encodeURIComponent(q)}` : '');
-    const res  = await fetch(url, { signal: acAbort.signal });
-    const data = await res.json();
-    acRender(data, q);
-  } catch(e) {
-    if (e.name !== 'AbortError') acClose();
-  }
+function acFetch(q) {
+  if (!q) { acClose(); return; }
+  const ql = q.toUpperCase();
+  // Prioritize starts-with matches, then contains
+  const starts   = allStocks.filter(t => t.toUpperCase().startsWith(ql));
+  const contains = allStocks.filter(t => !t.toUpperCase().startsWith(ql) && t.toUpperCase().includes(ql));
+  acRender([...starts, ...contains].slice(0, 30), q);
 }
 
 function acOnInput() {
   const q = $('ticker-input').value.trim();
-  clearTimeout(acDebounce);
   if (!q) { acClose(); return; }
-  acDebounce = setTimeout(() => acFetch(q), 200);
+  acFetch(q);
 }
 
 function acOnFocus() {
@@ -1155,6 +1149,16 @@ function acOnKeydown(e) {
 document.addEventListener('mousedown', e => {
   if (!e.target.closest('#ac-dropdown') && e.target.id !== 'ticker-input') acClose();
 });
+
+// Load full stock list once on page load
+(async () => {
+  try {
+    const res = await fetch('/stocks');
+    allStocks = await res.json();
+  } catch(e) {
+    console.warn('Could not load stock list:', e);
+  }
+})();
 
 /* ═══════════════════════════════════════════════════
    API CALL
