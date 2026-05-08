@@ -8,4 +8,6 @@ langchain-core
 httpx
 python-dotenv
 supabase
+nsetoolsy
 yfinance
+langchain_tavily
